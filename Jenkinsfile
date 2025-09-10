@@ -37,7 +37,8 @@ pipeline {
 
                     # Create challenge dirs remotely
                     ansible -i ansible/inventory.ini all -m file \
-                      -a \\"path=/var/www/html/.well-known/acme-challenge state=directory owner=www-data group=www-data mode=0755\\"
+                      -a \\"path=/var/www/html/.well-known/acme-challenge state=directory owner=www-data group=www-data mode=0755\\" \
+                      --become
                   done
                 '''
             }
