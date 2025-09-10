@@ -1,0 +1,42 @@
+---
+- hosts: webservers
+  become: true
+  vars:
+    ssl_dir: /etc/nginx/ssl
+  tasks:
+    - name: Ensure SSL directory exists
+      file:
+        path: "{{ ssl_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Copy certificates
+      copy:
+        src: "{{ cert_dir }}/{{ inventory_hostname }}/{{ inventory_hostname }}.crt"
+        dest: "{{ ssl_dir }}/{{ inventory_hostname }}.crt"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Copy private key
+      copy:
+        src: "{{ cert_dir }}/{{ inventory_hostname }}/{{ inventory_hostname }}.key"
+        dest: "{{ ssl_dir }}/{{ inventory_hostname }}.key"
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Copy CA file
+      copy:
+        src: "{{ cert_dir }}/{{ inventory_hostname }}/ca.cer"
+        dest: "{{ ssl_dir }}/ca.cer"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Reload nginx
+      service:
+        name: nginx
+        state: reloaded
