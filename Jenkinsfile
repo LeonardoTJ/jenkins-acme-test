@@ -5,6 +5,7 @@ pipeline {
         ACME_SH_HOME = "${WORKSPACE}/.acme.sh"
         CERT_DIR     = "${WORKSPACE}/certs"
         ACME_SERVER  = "https://acme-staging-v02.api.letsencrypt.org/directory" // lets encrypt staging directory - avoid rate limiting
+        ANSIBLE_HOST_KEY_CHECKING = 'False'  // disables strict host key checking
     }
 
     stages {
