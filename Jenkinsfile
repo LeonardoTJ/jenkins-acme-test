@@ -29,6 +29,7 @@ pipeline {
 
         stage('Provision HTTP-01 Challenges') {
             steps {
+              withCredentials([sshUserPrivateKey(credentialsId: 'ubuntu', keyFileVariable: 'SSH_KEY')]) {
                 sh '''
                   for row in $(jq -c '.[]' domains.json); do
                     domain=$(echo $row | jq -r .name)
@@ -37,11 +38,10 @@ pipeline {
                     echo ">>> Provisioning challenge directories for $domain ($alt_names)"
 
                     # Create challenge dirs remotely
-                    withCredentials([sshUserPrivateKey(credentialsId: 'ubuntu', keyFileVariable: 'SSH_KEY')]) {
                       ansible-playbook -i ansible/inventory.ini ansible/prepare-challenges.yml
-                    }
                   done
                 '''
+              }
             }
         }
 
