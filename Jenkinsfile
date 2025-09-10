@@ -36,7 +36,9 @@ pipeline {
                     echo ">>> Provisioning challenge directories for $domain ($alt_names)"
 
                     # Create challenge dirs remotely
-                    ansible-playbook -i ansible/inventory.ini ansible/prepare-challenges.yml
+                    withCredentials([sshUserPrivateKey(credentialsId: 'ubuntu', keyFileVariable: 'SSH_KEY')]) {
+                      ansible-playbook -i ansible/inventory.ini ansible/prepare-challenges.yml
+                    }
                   done
                 '''
             }
