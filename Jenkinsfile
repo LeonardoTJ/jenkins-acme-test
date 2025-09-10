@@ -21,7 +21,7 @@ pipeline {
                   # install acme.sh to workspace-local home if not installed
                   mkdir -p $ACME_SH_HOME $CERT_DIR
                   if [ ! -x "$ACME_SH_HOME/acme.sh" ]; then
-                    curl https://get.acme.sh | sh - --home $ACME_SH_HOME
+                    curl https://get.acme.sh | sh -s email=vitog93511@knilok.com --home $ACME_SH_HOME
                   fi
                 '''
             }
@@ -93,7 +93,7 @@ pipeline {
           rm -rf $ACME_SH_HOME/
         '''
       }
-      
+
       always {
         archiveArtifacts artifacts: 'certs/**/*', allowEmptyArchive: true
       }
