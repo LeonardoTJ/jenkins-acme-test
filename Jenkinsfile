@@ -76,11 +76,13 @@ pipeline {
 
         stage('Distribute Certificates') {
             steps {
+              withCredentials([sshUserPrivateKey(credentialsId: 'ubuntu', keyFileVariable: 'SSH_KEY')]) {
                 sh '''
                   # Run ansible from the agent; ansible must be installed on the agent
                   ansible-playbook -i ansible/inventory.ini ansible/deploy-certs.yml \
-                    --extra-vars "cert_dir=$CERT_DIR"
+                    --extra-vars "cert_dir=$CERT_DIR --private-key $SSH_KEY"
                 '''
+              }
             }
         }
     }
