@@ -58,7 +58,7 @@ pipeline {
                       --server $ACME_SERVER \
                       -d $domain \
                       $(for alt in $(echo $alt_names | tr ',' ' '); do echo -n "-d $alt "; done) \
-                      --webroot /var/www/html \
+                      --webroot /var/www/acme-challenges \
                       --home $ACME_SH_HOME \
                       --debug \
                       --force
