@@ -2,10 +2,11 @@ pipeline {
     agent { label 'build' }  // run on dedicated agent
 
     environment {
-        ACME_SH_HOME = "${WORKSPACE}/.acme.sh"
-        CERT_DIR     = "${WORKSPACE}/certs"
-        ACME_SERVER  = "https://acme-staging-v02.api.letsencrypt.org/directory" // lets encrypt staging directory - avoid rate limiting
-        ANSIBLE_HOST_KEY_CHECKING = 'False'  // disables strict host key checking
+        ACME_SH_HOME        = "${WORKSPACE}/.acme.sh"
+        CERT_DIR            = "${WORKSPACE}/certs"
+        ACME_SERVER         = "https://acme-staging-v02.api.letsencrypt.org/directory"   // lets encrypt staging directory - avoid rate limiting
+        WEBROOT             =  "/var/www/html"                               // ACME server will place challenge here
+        ANSIBLE_HOST_KEY_CHECKING = 'False'                                              // disables strict host key checking
     }
 
     stages {
@@ -23,25 +24,11 @@ pipeline {
                   if [ ! -x "$ACME_SH_HOME/acme.sh" ]; then
                     curl https://get.acme.sh | sh -s email=vitog93511@knilok.com --home $ACME_SH_HOME
                   fi
+                  # Provision HTTP-01 Challenges directory
+                  sudo mkdir -vp "$WEBROOT/.well-known/acme-challenge/"
+                  sudo chown -R www-data:www-data "$WEBROOT/.well-known/acme-challenge/"
+                  sudo chmod -R 775 "$WEBROOT/.well-known/acme-challenge/"
                 '''
-            }
-        }
-
-        stage('Provision HTTP-01 Challenges') {
-            steps {
-              withCredentials([sshUserPrivateKey(credentialsId: 'ubuntu', keyFileVariable: 'SSH_KEY')]) {
-                sh '''
-                  for row in $(jq -c '.[]' domains.json); do
-                    domain=$(echo $row | jq -r .name)
-                    alt_names=$(echo $row | jq -r '.alt_names | join(",")')
-
-                    echo ">>> Provisioning challenge directories for $domain ($alt_names)"
-
-                    # Create challenge dirs remotely
-                      ansible-playbook -i ansible/inventory.ini ansible/prepare-challenges.yml --private-key $SSH_KEY
-                  done
-                '''
-              }
             }
         }
 
@@ -58,17 +45,18 @@ pipeline {
                       --server $ACME_SERVER \
                       -d $domain \
                       $(for alt in $(echo $alt_names | tr ',' ' '); do echo -n "-d $alt "; done) \
-                      --webroot /var/www/acme-challenges \
+                      --webroot $WEBROOT \
                       --home $ACME_SH_HOME \
                       --debug \
                       --force
 
                     mkdir -p $CERT_DIR/$domain
-                    $ACME_SH_HOME/acme.sh --debug --install-cert -d $domain \
+                    $ACME_SH_HOME/acme.sh --install-cert -d $domain \
                       --key-file       $CERT_DIR/$domain/$domain.key \
                       --fullchain-file $CERT_DIR/$domain/$domain.crt \
                       --ca-file        $CERT_DIR/$domain/ca.cer \
-                      --home $ACME_SH_HOME
+                      --home $ACME_SH_HOME \
+                      --debug
                   done
                 '''
             }
