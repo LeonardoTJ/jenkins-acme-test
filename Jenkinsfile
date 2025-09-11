@@ -54,7 +54,7 @@ pipeline {
 
                     echo ">>> Issuing certificate for $domain ($alt_names)"
 
-                    $ACME_SH_HOME/acme.sh --issue \
+                    $ACME_SH_HOME/acme.sh --debug --issue \
                       --server $ACME_SERVER \
                       -d $domain \
                       $(for alt in $(echo $alt_names | tr ',' ' '); do echo -n "-d $alt "; done) \
@@ -64,7 +64,7 @@ pipeline {
                       --force
 
                     mkdir -p $CERT_DIR/$domain
-                    $ACME_SH_HOME/acme.sh --install-cert -d $domain \
+                    $ACME_SH_HOME/acme.sh --debug --install-cert -d $domain \
                       --key-file       $CERT_DIR/$domain/$domain.key \
                       --fullchain-file $CERT_DIR/$domain/$domain.crt \
                       --ca-file        $CERT_DIR/$domain/ca.cer \
