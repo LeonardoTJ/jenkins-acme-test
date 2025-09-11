@@ -1,5 +1,6 @@
 ---
-- hosts: webservers
+- name: Deploy SSL certificates to webservers
+  hosts: webservers
   become: true
   vars:
     ssl_dir: /etc/nginx/ssl
@@ -35,6 +36,16 @@
         owner: root
         group: root
         mode: '0644'
+
+    - name: Configure nginx to use deployed certs
+      blockinfile:
+        path: "/etc/nginx/sites-available/{{ inventory_hostname }}"
+        marker: "# {mark} ANSIBLE MANAGED SSL BLOCK"
+        block: |
+          ssl_certificate {{ ssl_dir }}/ca.cer;
+          ssl_certificate_key {{ ssl_dir }}/{{ inventory_hostname }}.key;
+      notify:
+        - Reload nginx
 
     - name: Reload nginx
       service:
