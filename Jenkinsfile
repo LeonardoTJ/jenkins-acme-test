@@ -54,7 +54,7 @@ pipeline {
 
                     echo ">>> Issuing certificate for $domain ($alt_names)"
 
-                    $ACME_SH_HOME/acme.sh --debug --issue \
+                    $ACME_SH_HOME/acme.sh --issue \
                       --server $ACME_SERVER \
                       -d $domain \
                       $(for alt in $(echo $alt_names | tr ',' ' '); do echo -n "-d $alt "; done) \
