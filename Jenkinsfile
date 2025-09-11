@@ -32,6 +32,22 @@ pipeline {
             }
         }
 
+        stage('Debug Permissions') {
+          steps {
+              sh '''
+                echo "Current user: $(whoami)"
+                echo "Groups: $(groups)"
+                echo "WEBROOT permissions:"
+                ls -la $WEBROOT/
+                echo "Challenge directory permissions:"
+                ls -la $WEBROOT/.well-known/
+                ls -la $WEBROOT/.well-known/acme-challenge/
+                echo "Test write access:"
+                touch $WEBROOT/.well-known/acme-challenge/test-$(date +%s) || echo "Write test failed"
+              '''
+          }
+        }
+
         stage('Issue Certificates') {
             steps {
                 sh '''
