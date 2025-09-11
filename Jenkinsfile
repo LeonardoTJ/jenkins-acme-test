@@ -27,7 +27,7 @@ pipeline {
                   # Provision HTTP-01 Challenges directory
                   sudo mkdir -vp "$WEBROOT/.well-known/acme-challenge/"
                   sudo chown -R jenkins:www-data "$WEBROOT/.well-known/acme-challenge/"
-                  sudo chmod -R 0555 "$WEBROOT/.well-known/acme-challenge/"
+                  sudo chmod -R 0775 "$WEBROOT/.well-known/acme-challenge/"
                 '''
             }
         }
