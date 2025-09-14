@@ -1,0 +1,12 @@
+{
+  "servers": [
+    {
+      "name": "web01",
+      "alternate_names": ["api.corp.local", "login.corp.local"]
+    },
+    {
+      "name": "web02",
+      "alternate_names": ["app.corp.local", "files.corp.local"]
+    }
+  ]
+}

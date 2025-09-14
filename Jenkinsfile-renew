@@ -1,0 +1,84 @@
+pipeline {
+  agent { label 'acme-agent' }
+
+  parameters {
+    string(name: 'SERVER_FILTER', defaultValue: '', description: 'Optional: Run for a single server name')
+  }
+
+  environment {
+    ACME_SERVER = 'https://acme.adcs.corp.local/directory'
+    CERTS_DIR   = '/mnt/project/certs'
+  }
+
+  stages {
+    stage('Checkout & Parse') {
+      steps {
+        checkout scm
+        script {
+          def json = readFile('servers.json')
+          def parsed = readJSON text: json
+          servers = parsed.servers
+
+          if (params.SERVER_FILTER?.trim()) {
+            servers = servers.findAll { it.name == params.SERVER_FILTER }
+          }
+          if (!servers) {
+            error "No servers selected for renewal"
+          }
+        }
+      }
+    }
+
+    stage('Renew Certificates') {
+      parallel {
+        script {
+          def branches = [:]
+          for (srv in servers) {
+            branches[srv.name] = {
+                sh """
+                  mkdir -p ${CERTS_DIR}/${srv.name}
+                  acme.sh --renew --signcsr --csr ${CERTS_DIR}/${srv.name}/${srv.name}.csr \
+                    --server ${ACME_SERVER} \
+                    --fullchain-file ${CERTS_DIR}/${srv.name}/fullchain.pem \
+                    --cert-file ${CERTS_DIR}/${srv.name}/cert.pem \
+                    --key-file ${CERTS_DIR}/${srv.name}/server.key \
+                    --webroot /var/www/html/acme-challenge \
+                    --debug 2
+                """
+                withCredentials([string(credentialsId: 'enc-pass', variable: 'ENC_PASS')]) {
+                sh """
+                  scripts/encrypt.sh "$ENC_PASS" ${srv.name} ${CERTS_DIR}/${srv.name} 
+                """
+              }
+            }
+          }
+          parallel branches
+        }
+      }
+    }
+
+    stage('Deploy Certificates') {
+      parallel {
+        script {
+          def branches = [:]
+          int counter = 0
+          for (srv in servers) {
+            if (counter >= 5) break
+            def server = srv
+            branches[server.name] = {
+              stage("Deploy ${server.name}") {
+                def outdir = "${CERTS_DIR}/${server.name}"
+                sh """
+                  ansible-playbook -i ${server.name}, ansible/deploy-certs.yml \
+                   --extra-vars "enc_cert_src=${outdir}/server.crt.enc enc_key_src=${outdir}/server.key.enc vault_decrypt_pass=\$ENCRYPT_PASS"
+                """
+              }
+            }
+            counter++
+          }
+          parallel branches
+        }
+      }
+    }
+  }
+}

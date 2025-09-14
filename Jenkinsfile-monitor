@@ -1,0 +1,77 @@
+pipeline {
+  agent { label 'acme-agent' }
+
+  triggers {
+    cron('H H * * 0') // run weekly on Sunday, randomize hour/minute
+  }
+
+  stages {
+    stage('Checkout & Parse') {
+      steps {
+        checkout scm
+        script {
+          def json = readFile('servers.json')
+          def parsed = readJSON text: json
+          servers = parsed.servers
+        }
+      }
+    }
+
+    stage('Check Certificates') {
+      steps {
+        script {
+          def inventory = []
+          for (srv in servers) {
+            def primary = srv.name
+            def domains = [primary] + (srv.alternate_names ?: [])
+            for (d in domains) {
+              try {
+                def exp = sh(
+                  returnStdout: true,
+                  script: """
+                    echo | openssl s_client -connect ${d}:443 -servername ${d} 2>/dev/null \
+                    | openssl x509 -noout -enddate \
+                    | cut -d= -f2
+                  """
+                ).trim()
+                inventory << [server: srv.name, domain: d, notAfter: exp]
+              } catch (Exception e) {
+                inventory << [server: srv.name, domain: d, notAfter: "ERROR: ${e.message}"]
+              }
+            }
+          }
+          writeFile file: 'cert_expiry.json', text: groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(inventory))
+          archiveArtifacts artifacts: 'cert_expiry.json'
+        }
+      }
+    }
+
+    stage('Alert Expiring') {
+      steps {
+        script {
+          def data = readJSON file: 'cert_expiry.json'
+          def now = new Date()
+          def alerts = []
+          for (c in data) {
+            if (!c.notAfter.startsWith("ERROR")) {
+              def sdf = new java.text.SimpleDateFormat("MMM d HH:mm:ss yyyy z", java.util.Locale.US)
+              def expiry = sdf.parse(c.notAfter)
+              def daysLeft = ((expiry.time - now.time) / (1000*60*60*24)) as int
+              if (daysLeft < 30) {
+                alerts << "${c.domain} on ${c.server} expires in ${daysLeft} days (${c.notAfter})"
+              }
+            } else {
+              alerts << "Could not check ${c.domain} on ${c.server} (${c.notAfter})"
+            }
+          }
+          if (alerts) {
+            echo "⚠️ Certificate Alerts:\n" + alerts.join("\n")
+            // optional: integrate with Slack/email here
+          } else {
+            echo "✅ No certificates expiring within 30 days."
+          }
+        }
+      }
+    }
+  }
+}

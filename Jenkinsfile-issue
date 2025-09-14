@@ -1,0 +1,103 @@
+pipeline {
+  agent { label 'acme-agent' }
+
+  parameters {
+    string(name: 'SERVER_FILTER', defaultValue: '', description: 'Optional: Run for a single server name')
+  }
+
+  environment {
+    ACME_SERVER = 'https://acme.adcs.corp.local/directory'
+    CERTS_DIR   = '/mnt/project/certs'
+  }
+  stages {
+    stage('Checkout & Parse') {
+      steps {
+        checkout scm
+        script {
+          def json = readFile('servers.json')
+          def parsed = readJSON text: json
+          servers = parsed.servers
+
+          if (params.SERVER_FILTER?.trim()) {
+            servers = servers.findAll { it.name == params.SERVER_FILTER }
+          }
+          if (!servers) {
+            error "No servers selected for issuance"
+          }
+        }
+      }
+    }
+
+    stage('Provision Challenge Dirs and Nginx conf') {
+      steps {
+        script {
+          def branches = [:]
+          for (srv in servers) {
+            branches[srv.name] = {
+              withCredentials([sshUserPrivateKey(credentialsId: 'ansible-ssh-key', keyFileVariable: 'SSH_KEY')]) {
+                sh """
+                  ANSIBLE_PRIVATE_KEY_FILE=${SSH_KEY} \
+                  ansible-playbook -i ${srv.name}, ansible/provision-challenge.yml
+                """
+              }
+            }
+          }
+          parallel branches
+        }
+      }
+    }
+
+    stage('Issue Certificates') {
+      parallel {
+        script {
+          def branches = [:]
+          for (srv in servers) {
+            branches[srv.name] = {
+              sh """
+                mkdir -p ${CERTS_DIR}/${srv.name}
+                acme.sh --signcsr -csr ${CERTS_DIR}/${srv.name}/${srv.name}.csr \
+                  --server ${ACME_SERVER} \
+                  --cert-file ${CERTS_DIR}/${srv.name}/cert.pem \
+                  --fullchain-file ${CERTS_DIR}/${srv.name}/fullchain.pem \
+                  --key-file ${CERTS_DIR}/${srv.name}/server.key \
+                  --webroot /var/www/html/acme-challenge \
+                  --debug 2
+              """
+
+              withCredentials([string(credentialsId: 'enc-pass', variable: 'ENC_PASS')]) {
+                sh """
+                  scripts/encrypt.sh ${srv.name} ${CERTS_DIR}/${srv.name} "$ENC_PASS"
+                """
+              }
+            }
+          }
+          parallel branches
+        }
+      }
+    }
+
+    stage('Deploy Certificates') {
+      parallel {
+        script {
+          def branches = [:]
+          for (srv in servers) {
+            branches[srv.name] = {
+              withCredentials([
+                sshUserPrivateKey(credentialsId: 'ansible-ssh-key', keyFileVariable: 'SSH_KEY'),
+                string(credentialsId: 'enc-pass', variable: 'DECRYPT_PASS')
+              ]) {
+                sh """
+                  ANSIBLE_PRIVATE_KEY_FILE=${SSH_KEY} \
+                  DECRYPT_PASS=$DECRYPT_PASS \
+                  ansible-playbook -i ${srv.name}, ansible/deploy-certs.yml \
+                    --extra-vars "server_name=${srv.name} certs_dir=${CERTS_DIR}/${srv.name}"
+                """
+              }
+            }
+          }
+          parallel branches
+        }
+      }
+    }
+  }
+}

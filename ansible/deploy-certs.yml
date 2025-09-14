@@ -1,0 +1,123 @@
+---
+- name: Deploy certificates and restore nginx
+  hosts: all
+  become: true
+  vars:
+    enc_cert_src: ""  # path on control machine (ansible controller) to encrypted certificate file
+    enc_key_src: ""   # path on control machine to encrypted key file
+    cert_dest: "/etc/nginx/ssl/server.crt"
+    key_dest: "/etc/nginx/ssl/server.key"
+    acme_challenge_dir: /var/www/html/acme-challenge
+    nginx_site: /etc/nginx/conf.d/jenkins.conf
+    decrypt_pass: "{{ lookup('env','DECRYPT_PASS') }}"  # provided via environment variable
+  tasks:
+    - name: Ensure ssl directory exists
+      ansible.builtin.file:
+        path: "{{ cert_dest | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+
+    - name: Ensure key directory exists
+      ansible.builtin.file:
+        path: "{{ key_dest | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+
+    - name: Copy encrypted cert to remote /tmp
+      ansible.builtin.copy:
+        src: "{{ enc_cert_src }}"
+        dest: "/tmp/{{ inventory_hostname }}.crt.enc"
+        mode: "0600"
+
+    - name: Copy encrypted key to remote /tmp
+      ansible.builtin.copy:
+        src: "{{ enc_key_src }}"
+        dest: "/tmp/{{ inventory_hostname }}.key.enc"
+        mode: "0600"
+    
+    - name: Ensure decrypt_pass is present
+      ansible.builtin.fail:
+        msg: "DECRYPT_PASS environment variable is not set on control node. Set it in Jenkins using withCredentials."
+      when: decrypt_pass is not defined or decrypt_pass == ""
+
+    - name: Decrypt cert on remote
+      ansible.builtin.shell: >
+        openssl enc -d -aes-128-cbc -pbkdf2 -salt
+        -in /tmp/{{ inventory_hostname }}.crt.enc
+        -out {{ cert_dest }}
+        -pass pass:"{{ decrypt_pass }}"
+      args:
+        executable: /bin/bash
+      no_log: true
+
+    - name: Set permissions on cert
+      ansible.builtin.file:
+        path: "{{ cert_dest }}"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Decrypt key directly to nginx path
+      ansible.builtin.shell: >
+        openssl enc -d -aes-128-cbc -pbkdf2 -salt
+        -in /tmp/{{ inventory_hostname }}.key.enc
+        -out {{ key_dest }}
+        -pass pass:"{{ decrypt_pass }}"
+      args:
+        executable: /bin/bash
+      no_log: true
+
+    - name: Set permissions on key
+      ansible.builtin.file:
+        path: "{{ key_dest }}"
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Reload nginx to pickup new cert
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+    
+    - name: Cleanup remote encrypted payloads
+      ansible.builtin.file:
+        path: "/tmp/{{ inventory_hostname }}.crt.enc"
+        state: absent
+      ignore_errors: yes
+
+    - name: Cleanup remote encrypted key payloads
+      ansible.builtin.file:
+        path: "/tmp/{{ inventory_hostname }}.key.enc"
+        state: absent
+      ignore_errors: yes
+
+    - name: Remove ACME challenge directory
+      ansible.builtin.file:
+        path: "{{ acme_challenge_dir }}"
+        state: absent
+
+    - name: Restore nginx configuration from backup (if exists)
+      ansible.builtin.stat:
+        path: "{{ nginx_site }}.bak"
+      register: nginx_backup_stat
+
+    - name: Restore backup to active site file
+      ansible.builtin.copy:
+        src: "{{ nginx_site }}.bak"
+        dest: "{{ nginx_site }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0644'
+      when: nginx_backup_stat.stat.exists
+      notify: Reload nginx
+      
+  handlers:
+    - name: Reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded

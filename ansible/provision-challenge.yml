@@ -1,0 +1,58 @@
+---
+- name: Provision ACME HTTP challenge in nginx
+  hosts: all
+  become: true
+    vars:
+    nginx_site: /etc/nginx/conf.d/jenkins.conf
+    acme_challenge_dir: /var/www/html/acme-challenge/.well-known/acme-challenge
+    acme_user: www-data
+    acme_group: www-data
+
+  tasks:
+    - name: Ensure nginx site file exists
+      ansible.builtin.stat:
+        path: "{{ nginx_site }}"
+      register: nginx_site_stat
+
+    - name: Fail if nginx site file not found
+      ansible.builtin.fail:
+        msg: "nginx site file {{ nginx_site }} not found on {{ inventory_hostname }}"
+      when: not nginx_site_stat.stat.exists
+
+    - name: Backup nginx site file (if not already backed up)
+      ansible.builtin.copy:
+        src: "{{ nginx_site }}"
+        dest: "{{ nginx_site }}.bak"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0644'
+      register: backup_result
+      notify: Reload nginx
+
+    - name: Ensure challenge directory exists
+      ansible.builtin.file:
+        path: "{{ acme_challenge_dir }}"
+        state: directory
+        owner: "{{ acme_user }}"
+        group: "{{ acme_group }}"
+        mode: '0755'
+
+    - name: Insert ACME challenge location block ABOVE return 301 redirect
+      ansible.builtin.blockinfile:
+        path: "{{ nginx_site }}"
+        marker: "# {mark} ACME CHALLENGE BLOCK"
+        insertbefore: '^\s*return 301.*$'
+        block: |
+          location ^~ /.well-known/acme-challenge/ {
+              root {{ acme_challenge_dir }};
+              default_type "text/plain";
+              allow all;
+          }
+      notify: Reload nginx
+
+  handlers:
+    - name: Reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
