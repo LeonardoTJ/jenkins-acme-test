@@ -1,0 +1,192 @@
+---
+- name: ACME Certificate Deployment
+  hosts: target
+  become: yes
+  vars:
+    challenge_dir: /var/www/html/.well-known/acme-challenge
+    nginx_conf: /etc/nginx/conf.d/jenkins.conf
+    cert_path: /etc/ssl/certs/new-cert.cer
+    key_path: /etc/ssl/private/new-key.key
+    workspace_dir: /local/mnt/workspace/acme
+    
+  tasks:
+    - name: Create challenge directory
+      file:
+        path: "{{ challenge_dir }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+        recurse: yes
+    
+    - name: Check if nginx configuration exists
+      stat:
+        path: "{{ nginx_conf }}"
+      register: nginx_conf_stat
+    
+    - name: Backup existing nginx configuration
+      copy:
+        src: "{{ nginx_conf }}"
+        dest: "{{ nginx_conf }}.backup"
+        remote_src: yes
+      when: nginx_conf_stat.stat.exists
+    
+    - name: Get ACME account thumbprint
+      delegate_to: localhost
+      shell: |
+        acme.sh --info --server {{ acme_server }} | grep -oP 'Thumbprint:\s*\K[^\s]+'
+      register: acme_thumbprint
+      changed_when: false
+    
+    - name: Read existing nginx configuration
+      slurp:
+        src: "{{ nginx_conf }}"
+      register: nginx_conf_content
+      when: nginx_conf_stat.stat.exists
+    
+    - name: Prepare ACME challenge location block
+      set_fact:
+        acme_location_block: |
+          location ~ ^/\.well-known/acme-challenge/([-_a-zA-Z0-9]+)$ {
+                default_type text/plain;
+                return 200 "$1.{{ acme_thumbprint.stdout }}";
+              }
+    
+    - name: Insert ACME challenge configuration into nginx
+      replace:
+        path: "{{ nginx_conf }}"
+        regexp: '(\s*)(location\s+/\s*\{)'
+        replace: '\1{{ acme_location_block }}\n\1\2'
+        backup: yes
+      when: nginx_conf_stat.stat.exists
+    
+    - name: Create new nginx configuration if not exists
+      copy:
+        content: |
+          server {
+              listen 80;
+              server_name {{ target_host }};
+              
+              location ~ ^/\.well-known/acme-challenge/([-_a-zA-Z0-9]+)$ {
+                default_type text/plain;
+                return 200 "$1.{{ acme_thumbprint.stdout }}";
+              }
+              
+              location / {
+                  return 301 https://$server_name$request_uri;
+              }
+          }
+        dest: "{{ nginx_conf }}"
+        owner: root
+        group: root
+        mode: '0644'
+      when: not nginx_conf_stat.stat.exists
+    
+    - name: Test nginx configuration
+      command: nginx -t
+      register: nginx_test
+      failed_when: nginx_test.rc != 0
+    
+    - name: Reload nginx
+      systemd:
+        name: nginx
+        state: reloaded
+    
+    - name: Request certificate from ACME server
+      delegate_to: localhost
+      shell: |
+        acme.sh --signcsr \
+          --csr {{ csr_file }} \
+          --server {{ acme_server }} \
+          --stateless \
+          --webroot /var/www/html \
+          --domain {{ target_host }}
+      register: acme_request
+      environment:
+        ACME_DIRECTORY: "{{ acme_server }}"
+    
+    - name: Wait for ACME validation
+      pause:
+        seconds: 5
+    
+    - name: Complete ACME challenge validation
+      delegate_to: localhost
+      shell: |
+        acme.sh --renew \
+          --domain {{ target_host }} \
+          --server {{ acme_server }} \
+          --stateless
+      register: cert_issue
+      retries: 3
+      delay: 10
+      until: cert_issue.rc == 0
+    
+    - name: Extract certificate and key
+      delegate_to: localhost
+      shell: |
+        # Extract certificate
+        acme.sh --install-cert \
+          --domain {{ target_host }} \
+          --cert-file /tmp/{{ target_host }}.cer \
+          --key-file /tmp/{{ target_host }}.key \
+          --fullchain-file /tmp/{{ target_host }}.fullchain
+      register: cert_extract
+    
+    - name: Copy certificate to target host
+      copy:
+        src: "/tmp/{{ target_host }}.cer"
+        dest: "{{ cert_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+    
+    - name: Copy private key to target host
+      copy:
+        src: "/tmp/{{ target_host }}.key"
+        dest: "{{ key_path }}"
+        owner: root
+        group: root
+        mode: '0600'
+    
+    - name: Deploy nginx SSL configuration from template
+      template:
+        src: "{{ workspace_dir }}/jenkins.conf"
+        dest: "{{ nginx_conf }}"
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        host: "{{ target_host }}"
+    
+    - name: Test final nginx configuration
+      command: nginx -t
+      register: final_nginx_test
+      failed_when: final_nginx_test.rc != 0
+    
+    - name: Reload nginx with SSL configuration
+      systemd:
+        name: nginx
+        state: reloaded
+    
+    - name: Verify certificate deployment
+      shell: |
+        openssl x509 -in {{ cert_path }} -noout -dates
+        openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt {{ cert_path }}
+      register: cert_verify
+    
+    - name: Clean up temporary files
+      delegate_to: localhost
+      file:
+        path: "/tmp/{{ target_host }}.{{ item }}"
+        state: absent
+      loop:
+        - cer
+        - key
+        - fullchain
+    
+    - name: Remove ACME challenge location from nginx configuration
+      replace:
+        path: "{{ nginx_conf }}"
+        regexp: '(\s*)location ~ \^/\\\.well-known/acme-challenge/.*?\n.*?\n.*?\n.*?\}\n'
+        replace: ''
+      when: nginx_conf_stat.stat.exists
