@@ -53,11 +53,17 @@
               }
     
     - name: Insert ACME challenge configuration into nginx
-      replace:
+      blockinfile:
         path: "{{ nginx_conf }}"
-        regexp: '(\s*)(location\s+/\s*\{)'
-        replace: '\1{{ acme_location_block }}\n\1\2'
+        insertbefore: '^\s*location\s+/\s*\{'
+        marker: "# {mark} ACME CHALLENGE BLOCK"
+        block: |
+          location ~ ^/\.well-known/acme-challenge/([-_a-zA-Z0-9]+)$ {
+                default_type text/plain;
+                return 200 "$1.{{ acme_thumbprint.stdout }}";
+          }
         backup: yes
+        state: present
       when: nginx_conf_stat.stat.exists
     
     - name: Create new nginx configuration if not exists
@@ -185,8 +191,8 @@
         - fullchain
     
     - name: Remove ACME challenge location from nginx configuration
-      replace:
+      blockinfile:
         path: "{{ nginx_conf }}"
-        regexp: '(\s*)location ~ \^/\\\.well-known/acme-challenge/.*?\n.*?\n.*?\n.*?\}\n'
-        replace: ''
+        marker: "# {mark} ACME CHALLENGE BLOCK"
+        state: absent
       when: nginx_conf_stat.stat.exists
