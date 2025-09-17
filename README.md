@@ -34,4 +34,3 @@ Renew pipeline is similar. It will:
 - read `servers.json`
 - for each primary, decrypt local CSR/key if needed, call `acme.sh --renew -d <primary> --server <ACME_SERVER> --debug 2` (for `--signcsr` you call `--signcsr` again with the same CSR if required by your ACME front end), or use `--renew` if acme.sh manages cert.
 - encrypt artifacts and deploy via Ansible.
-
